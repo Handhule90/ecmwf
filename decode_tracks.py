@@ -23,6 +23,30 @@ with path.open("rb") as file:
 
         count += 1
 
+        
+            from eccodes import codes_set, codes_get, codes_get_array
+
+            codes_set(message, "unpack", 1)
+
+            print("  Available keys:")
+            for key in (
+                "latitude",
+                "longitude",
+                "year",
+                "month",
+                "day",
+                "hour",
+                "minute",
+                "timePeriod",
+                "windSpeedAt10M",
+                "stormIdentifier",
+            ):
+                try:
+                    print(f"    {key}: {codes_get(message, key)}")
+                except Exception:
+                    pass
+
+
         try:
             print(f"BUFR message {count}")
             for key in (
