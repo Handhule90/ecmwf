@@ -19,11 +19,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install ECMWF downloader
-        run: pip install ecmwf-opendata
+      - name: Install required packages
+        run: pip install ecmwf-opendata eccodes
 
       - name: Fetch latest tropical cyclone tracks
         run: python fetch_ecmwf.py
+
+      - name: Inspect BUFR data
+        run: python decode_tracks.py
 
       - name: Save downloaded file
         uses: actions/upload-artifact@v4
