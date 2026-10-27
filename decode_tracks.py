@@ -9,6 +9,10 @@ from eccodes import (
     codes_get,
     codes_release,
     codes_set,
+    codes_keys_iterator_new,
+    codes_keys_iterator_next,
+    codes_keys_iterator_get_name,
+    codes_keys_iterator_delete,
 )
 
 INPUT = Path("ecmwf-track.bufr")
@@ -19,7 +23,7 @@ MS_TO_KNOTS = 1.94384449
 
 
 def get_value(message, key):
-    """Return a decoded numeric value, or None if missing."""
+    """Read a valid numeric BUFR value."""
     try:
         value = float(codes_get(message, key))
         if not math.isfinite(value) or value <= MISSING:
@@ -30,19 +34,51 @@ def get_value(message, key):
 
 
 def get_text(message, key):
-    """Return decoded text, or None if unavailable."""
+    """Read a text BUFR value."""
     try:
         value = str(codes_get(message, key)).strip()
-        return value if value else None
+        return value or None
     except Exception:
         return None
 
 
 def iso_utc(value):
-    """Format a datetime as an ISO 8601 UTC timestamp."""
     return value.astimezone(timezone.utc).isoformat().replace(
         "+00:00", "Z"
     )
+
+
+def inspect_keys(message):
+    """Print relevant available keys from the first BUFR message."""
+    print("\n--- BUFR key diagnostic ---")
+
+    iterator = codes_keys_iterator_new(message)
+
+    try:
+        while codes_keys_iterator_next(iterator):
+            key = codes_keys_iterator_get_name(iterator)
+
+            if any(term in key.lower() for term in (
+                "storm",
+                "track",
+                "latitude",
+                "longitude",
+                "timeperiod",
+                "timestep",
+                "step",
+                "wind",
+                "pressure",
+                "subset",
+                "descriptor",
+            )):
+                try:
+                    value = codes_get(message, key)
+                except Exception:
+                    value = "<unavailable>"
+
+                print(f"{key}: {value}")
+    finally:
+        codes_keys_iterator_delete(iterator)
 
 
 if not INPUT.exists():
@@ -65,22 +101,8 @@ with INPUT.open("rb") as file:
         try:
             codes_set(message, "unpack", 1)
 
-            # Inspect the BUFR structure in the Actions log.
             if messages_read == 1:
-                print("\n--- BUFR diagnostic (first message) ---")
-                for key in (
-                    "stormIdentifier",
-                    "latitude",
-                    "longitude",
-                    "timePeriod",
-                    "numberOfTrack",
-                    "numberOfSubsets",
-                    "numberOfObservations",
-                ):
-                    try:
-                        print(f"{key}: {codes_get(message, key)}")
-                    except Exception:
-                        print(f"{key}: unavailable")
+                inspect_keys(message)
 
             year = int(codes_get(message, "typicalYear"))
             month = int(codes_get(message, "typicalMonth"))
@@ -110,7 +132,6 @@ with INPUT.open("rb") as file:
                 print(f"Skipping {storm_id}: invalid coordinates")
                 continue
 
-            # Normalize forecast lead time.
             lead_hours = int(lead) if lead is not None else None
 
             record = {
@@ -126,8 +147,9 @@ with INPUT.open("rb") as file:
             }
 
             if lead_hours is not None:
-                valid_time = run_time + timedelta(hours=lead_hours)
-                record["valid_time_utc"] = iso_utc(valid_time)
+                record["valid_time_utc"] = iso_utc(
+                    run_time + timedelta(hours=lead_hours)
+                )
 
             records.append(record)
 
@@ -146,7 +168,7 @@ with INPUT.open("rb") as file:
 if reference_time is None:
     raise RuntimeError("No readable BUFR messages found.")
 
-# Keep the existing point-based data structure for compatibility.
+# Sort forecast points by storm ID and forecast lead time.
 records.sort(
     key=lambda item: (
         item["id"],
@@ -156,27 +178,16 @@ records.sort(
     )
 )
 
-# Group records by storm ID. These groups become candidate tracks.
-# The map should draw a line only when a group has at least two
-# distinct, chronologically ordered positions.
+# Group points only when multiple positions for the same storm exist.
 grouped = {}
 
 for record in records:
-    storm_id = record["id"]
-    grouped.setdefault(storm_id, []).append(record)
+    grouped.setdefault(record["id"], []).append(record)
 
 tracks = []
 
 for storm_id, points in grouped.items():
-    points.sort(
-        key=lambda item: (
-            item["forecast_lead_hours"]
-            if item["forecast_lead_hours"] is not None
-            else -1
-        )
-    )
-
-    # Do not fabricate a line from a single position.
+    # A single point is not a forecast track.
     if len(points) < 2:
         continue
 
