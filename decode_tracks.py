@@ -9,24 +9,17 @@ from eccodes import (
     codes_get,
     codes_release,
     codes_set,
-    codes_keys_iterator_new,
-    codes_keys_iterator_next,
-    codes_keys_iterator_get_name,
-    codes_keys_iterator_delete,
 )
 
 INPUT = Path("ecmwf-track.bufr")
 OUTPUT = Path("storms.json")
-
-MISSING = -1e90
 MS_TO_KNOTS = 1.94384449
 
 
 def get_value(message, key):
-    """Read a valid numeric BUFR value."""
     try:
         value = float(codes_get(message, key))
-        if not math.isfinite(value) or value <= MISSING:
+        if not math.isfinite(value) or value <= -1e90:
             return None
         return value
     except Exception:
@@ -34,7 +27,6 @@ def get_value(message, key):
 
 
 def get_text(message, key):
-    """Read a text BUFR value."""
     try:
         value = str(codes_get(message, key)).strip()
         return value or None
@@ -48,39 +40,6 @@ def iso_utc(value):
     )
 
 
-def inspect_keys(message):
-    """Print relevant available keys from the first BUFR message."""
-    print("\n--- BUFR key diagnostic ---")
-
-    iterator = codes_keys_iterator_new(message)
-
-    try:
-        while codes_keys_iterator_next(iterator):
-            key = codes_keys_iterator_get_name(iterator)
-
-            if any(term in key.lower() for term in (
-                "storm",
-                "track",
-                "latitude",
-                "longitude",
-                "timeperiod",
-                "timestep",
-                "step",
-                "wind",
-                "pressure",
-                "subset",
-                "descriptor",
-            )):
-                try:
-                    value = codes_get(message, key)
-                except Exception:
-                    value = "<unavailable>"
-
-                print(f"{key}: {value}")
-    finally:
-        codes_keys_iterator_delete(iterator)
-
-
 if not INPUT.exists():
     raise FileNotFoundError(f"Missing input file: {INPUT}")
 
@@ -92,7 +51,6 @@ records_skipped = 0
 with INPUT.open("rb") as file:
     while True:
         message = codes_bufr_new_from_file(file)
-
         if message is None:
             break
 
@@ -101,8 +59,24 @@ with INPUT.open("rb") as file:
         try:
             codes_set(message, "unpack", 1)
 
+            # Safe diagnostic: inspect known keys only.
             if messages_read == 1:
-                inspect_keys(message)
+                print("\n--- BUFR diagnostic ---")
+                for key in (
+                    "stormIdentifier",
+                    "latitude",
+                    "longitude",
+                    "timePeriod",
+                    "numberOfTrack",
+                    "numberOfSubsets",
+                    "numberOfObservations",
+                    "unexpandedDescriptors",
+                    "expandedDescriptors",
+                ):
+                    try:
+                        print(f"{key}: {codes_get(message, key)}")
+                    except Exception:
+                        print(f"{key}: unavailable")
 
             year = int(codes_get(message, "typicalYear"))
             month = int(codes_get(message, "typicalMonth"))
@@ -152,7 +126,6 @@ with INPUT.open("rb") as file:
                 )
 
             records.append(record)
-
             print(
                 f"Added {record['id']}: "
                 f"lat={lat}, lon={lon}, lead={lead_hours}"
@@ -168,7 +141,6 @@ with INPUT.open("rb") as file:
 if reference_time is None:
     raise RuntimeError("No readable BUFR messages found.")
 
-# Sort forecast points by storm ID and forecast lead time.
 records.sort(
     key=lambda item: (
         item["id"],
@@ -178,23 +150,15 @@ records.sort(
     )
 )
 
-# Group points only when multiple positions for the same storm exist.
 grouped = {}
-
 for record in records:
     grouped.setdefault(record["id"], []).append(record)
 
-tracks = []
-
-for storm_id, points in grouped.items():
-    # A single point is not a forecast track.
-    if len(points) < 2:
-        continue
-
-    tracks.append({
-        "id": storm_id,
-        "points": points,
-    })
+tracks = [
+    {"id": storm_id, "points": points}
+    for storm_id, points in grouped.items()
+    if len(points) >= 2
+]
 
 result = {
     "source": "ECMWF IFS tropical cyclone tracks",
@@ -207,10 +171,7 @@ result = {
     "tracks": tracks,
 }
 
-OUTPUT.write_text(
-    json.dumps(result, indent=2),
-    encoding="utf-8",
-)
+OUTPUT.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
 print("\n--- Summary ---")
 print(f"Messages read: {messages_read}")
