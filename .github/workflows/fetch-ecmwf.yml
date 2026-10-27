@@ -39,3 +39,14 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+          
+      - name: Publish storms.json to Neocities
+        env:
+          NEOCITIES_API_KEY: ${{ secrets.NEOCITIES_API_KEY }}
+        run: |
+          curl --fail-with-body \
+            -u "$NEOCITIES_API_KEY:" \
+            -F "storms.json=@storms.json" \
+            https://neocities.org/api/upload
+
+
