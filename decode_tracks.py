@@ -18,7 +18,6 @@ MISSING = -1e90
 MS_TO_KNOTS = 1.94384449
 
 
-
 def get_value(message, key):
     """Return a decoded numeric value, or None if missing."""
     try:
@@ -30,9 +29,8 @@ def get_value(message, key):
         return None
 
 
-
 def get_text(message, key):
-    """Return a decoded text value, or None if unavailable."""
+    """Return decoded text, or None if unavailable."""
     try:
         value = str(codes_get(message, key)).strip()
         return value if value else None
@@ -40,10 +38,17 @@ def get_text(message, key):
         return None
 
 
+def iso_utc(value):
+    """Format a datetime as an ISO 8601 UTC timestamp."""
+    return value.astimezone(timezone.utc).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+
 if not INPUT.exists():
     raise FileNotFoundError(f"Missing input file: {INPUT}")
 
-storms = []
+records = []
 reference_time = None
 messages_read = 0
 records_skipped = 0
@@ -51,6 +56,7 @@ records_skipped = 0
 with INPUT.open("rb") as file:
     while True:
         message = codes_bufr_new_from_file(file)
+
         if message is None:
             break
 
@@ -58,18 +64,23 @@ with INPUT.open("rb") as file:
 
         try:
             codes_set(message, "unpack", 1)
-            for key in (
-    "stormIdentifier",
-    "latitude",
-    "longitude",
-    "timePeriod",
-    "numberOfTrack",
-    "numberOfSubsets",
-):
-    try:
-        print(f"{key}: {codes_get(message, key)}")
-    except Exception as e:
-        print(f"{key}: unavailable ({e})")
+
+            # Inspect the BUFR structure in the Actions log.
+            if messages_read == 1:
+                print("\n--- BUFR diagnostic (first message) ---")
+                for key in (
+                    "stormIdentifier",
+                    "latitude",
+                    "longitude",
+                    "timePeriod",
+                    "numberOfTrack",
+                    "numberOfSubsets",
+                    "numberOfObservations",
+                ):
+                    try:
+                        print(f"{key}: {codes_get(message, key)}")
+                    except Exception:
+                        print(f"{key}: unavailable")
 
             year = int(codes_get(message, "typicalYear"))
             month = int(codes_get(message, "typicalMonth"))
@@ -79,15 +90,16 @@ with INPUT.open("rb") as file:
             run_time = datetime(
                 year, month, day, hour, tzinfo=timezone.utc
             )
-            reference_time = run_time
 
+            if reference_time is None:
+                reference_time = run_time
+
+            storm_id = get_text(message, "stormIdentifier")
             lat = get_value(message, "latitude")
             lon = get_value(message, "longitude")
             wind_ms = get_value(message, "windSpeedAt10M")
             lead = get_value(message, "timePeriod")
-            storm_id = get_text(message, "stormIdentifier")
 
-            # Coordinates are essential for displaying a map marker.
             if lat is None or lon is None:
                 records_skipped += 1
                 print(f"Skipping {storm_id}: missing coordinates")
@@ -98,8 +110,11 @@ with INPUT.open("rb") as file:
                 print(f"Skipping {storm_id}: invalid coordinates")
                 continue
 
+            # Normalize forecast lead time.
+            lead_hours = int(lead) if lead is not None else None
+
             record = {
-                "id": storm_id,
+                "id": storm_id or "unknown",
                 "latitude": lat,
                 "longitude": lon,
                 "wind_speed_ms": wind_ms,
@@ -107,23 +122,23 @@ with INPUT.open("rb") as file:
                     round(wind_ms * MS_TO_KNOTS, 2)
                     if wind_ms is not None else None
                 ),
-                "forecast_lead_hours": (
-                    int(lead) if lead is not None else None
-                ),
+                "forecast_lead_hours": lead_hours,
             }
 
-            # Calculate a forecast valid time when a lead time is present.
-            if lead is not None:
-                valid_time = run_time + timedelta(hours=lead)
-                record["valid_time_utc"] = (
-                    valid_time.isoformat().replace("+00:00", "Z")
-                )
+            if lead_hours is not None:
+                valid_time = run_time + timedelta(hours=lead_hours)
+                record["valid_time_utc"] = iso_utc(valid_time)
 
-            storms.append(record)
+            records.append(record)
+
             print(
-                f"Added {storm_id}: "
-                f"({lat}, {lon}), lead={lead}"
+                f"Added {record['id']}: "
+                f"lat={lat}, lon={lon}, lead={lead_hours}"
             )
+
+        except Exception as error:
+            records_skipped += 1
+            print(f"Skipping message {messages_read}: {error}")
 
         finally:
             codes_release(message)
@@ -131,18 +146,54 @@ with INPUT.open("rb") as file:
 if reference_time is None:
     raise RuntimeError("No readable BUFR messages found.")
 
+# Keep the existing point-based data structure for compatibility.
+records.sort(
+    key=lambda item: (
+        item["id"],
+        item["forecast_lead_hours"]
+        if item["forecast_lead_hours"] is not None
+        else -1,
+    )
+)
+
+# Group records by storm ID. These groups become candidate tracks.
+# The map should draw a line only when a group has at least two
+# distinct, chronologically ordered positions.
+grouped = {}
+
+for record in records:
+    storm_id = record["id"]
+    grouped.setdefault(storm_id, []).append(record)
+
+tracks = []
+
+for storm_id, points in grouped.items():
+    points.sort(
+        key=lambda item: (
+            item["forecast_lead_hours"]
+            if item["forecast_lead_hours"] is not None
+            else -1
+        )
+    )
+
+    # Do not fabricate a line from a single position.
+    if len(points) < 2:
+        continue
+
+    tracks.append({
+        "id": storm_id,
+        "points": points,
+    })
+
 result = {
     "source": "ECMWF IFS tropical cyclone tracks",
-    "attribution": (
-        "Data from ECMWF, licensed under CC BY 4.0"
-    ),
-    "forecast_run_utc": (
-        reference_time.isoformat().replace("+00:00", "Z")
-    ),
+    "attribution": "Data from ECMWF, licensed under CC BY 4.0",
+    "forecast_run_utc": iso_utc(reference_time),
     "messages_read": messages_read,
     "records_skipped": records_skipped,
-    "storm_count": len(storms),
-    "storms": storms,
+    "storm_count": len(records),
+    "storms": records,
+    "tracks": tracks,
 }
 
 OUTPUT.write_text(
@@ -150,7 +201,9 @@ OUTPUT.write_text(
     encoding="utf-8",
 )
 
-print(f"\nMessages read: {messages_read}")
+print("\n--- Summary ---")
+print(f"Messages read: {messages_read}")
 print(f"Records skipped: {records_skipped}")
-print(f"Valid records: {len(storms)}")
+print(f"Valid forecast points: {len(records)}")
+print(f"Storm groups with 2+ points: {len(tracks)}")
 print(f"JSON saved to: {OUTPUT}")
