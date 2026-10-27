@@ -1,0 +1,14 @@
+
+name: ECMWF Forecast Fetcher
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm workflow runs
+        run: echo "ECMWF workflow is running successfully."
