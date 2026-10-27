@@ -58,6 +58,18 @@ with INPUT.open("rb") as file:
 
         try:
             codes_set(message, "unpack", 1)
+            for key in (
+    "stormIdentifier",
+    "latitude",
+    "longitude",
+    "timePeriod",
+    "numberOfTrack",
+    "numberOfSubsets",
+):
+    try:
+        print(f"{key}: {codes_get(message, key)}")
+    except Exception as e:
+        print(f"{key}: unavailable ({e})")
 
             year = int(codes_get(message, "typicalYear"))
             month = int(codes_get(message, "typicalMonth"))
