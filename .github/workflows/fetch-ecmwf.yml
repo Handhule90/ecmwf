@@ -28,10 +28,14 @@ jobs:
       - name: Inspect BUFR data
         run: python decode_tracks.py
 
-      - name: Save downloaded file
+      
+      - name: Save downloaded data
         uses: actions/upload-artifact@v4
         with:
           name: ecmwf-track-data
-          path: ecmwf-track.bufr
+          path: |
+            ecmwf-track.bufr
+            storms.json
           if-no-files-found: error
           retention-days: 7
+
