@@ -18,6 +18,7 @@ MISSING = -1e90
 MS_TO_KNOTS = 1.94384449
 
 
+
 def get_value(message, key):
     """Return a decoded numeric value, or None if missing."""
     try:
@@ -25,8 +26,9 @@ def get_value(message, key):
         if not math.isfinite(value) or value <= MISSING:
             return None
         return value
-    except (ValueError, TypeError, RuntimeError):
+    except Exception:
         return None
+
 
 
 def get_text(message, key):
