@@ -1,11 +1,11 @@
 
+from pathlib import Path
 from eccodes import (
     codes_bufr_new_from_file,
     codes_get,
     codes_release,
+    codes_set,
 )
-
-from pathlib import Path
 
 path = Path("ecmwf-track.bufr")
 
@@ -23,13 +23,19 @@ with path.open("rb") as file:
 
         count += 1
 
-        
-            from eccodes import codes_set, codes_get, codes_get_array
-
+        try:
             codes_set(message, "unpack", 1)
 
-            print("  Available keys:")
+            print(f"\nBUFR message {count}")
+
             for key in (
+                "edition",
+                "dataCategory",
+                "numberOfSubsets",
+                "typicalYear",
+                "typicalMonth",
+                "typicalDay",
+                "typicalHour",
                 "latitude",
                 "longitude",
                 "year",
@@ -42,26 +48,10 @@ with path.open("rb") as file:
                 "stormIdentifier",
             ):
                 try:
-                    print(f"    {key}: {codes_get(message, key)}")
-                except Exception:
-                    pass
-
-
-        try:
-            print(f"BUFR message {count}")
-            for key in (
-                "edition",
-                "dataCategory",
-                "numberOfSubsets",
-                "typicalYear",
-                "typicalMonth",
-                "typicalDay",
-                "typicalHour",
-            ):
-                try:
                     print(f"  {key}: {codes_get(message, key)}")
                 except Exception:
                     pass
+
         finally:
             codes_release(message)
 
