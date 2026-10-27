@@ -7,8 +7,28 @@ on:
     - cron: "17 */6 * * *"
 
 jobs:
-  test:
+  fetch:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Confirm workflow runs
-        run: echo "ECMWF workflow is running successfully."
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ECMWF downloader
+        run: pip install ecmwf-opendata
+
+      - name: Fetch latest tropical cyclone tracks
+        run: python fetch_ecmwf.py
+
+      - name: Save downloaded file
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecmwf-track-data
+          path: ecmwf-track.bufr
+          if-no-files-found: error
+          retention-days: 7
