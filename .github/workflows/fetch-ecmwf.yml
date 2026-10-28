@@ -22,13 +22,15 @@ jobs:
       - name: Install required packages
         run: pip install ecmwf-opendata eccodes
 
+      - name: Test ECMWF ensemble track availability
+        run: python test_ensemble.py
+
       - name: Fetch latest tropical cyclone tracks
         run: python fetch_ecmwf.py
 
-      - name: Inspect BUFR data
+      - name: Decode deterministic forecast tracks
         run: python decode_tracks.py
 
-      
       - name: Save downloaded data
         uses: actions/upload-artifact@v4
         with:
@@ -39,8 +41,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-          
-      
       - name: Publish storms.json to Neocities
         env:
           NEOCITIES_API_KEY: ${{ secrets.NEOCITIES_API_KEY }}
@@ -49,6 +49,3 @@ jobs:
             -H "Authorization: Bearer $NEOCITIES_API_KEY" \
             -F "newiconshu/ecmwf/storms.json=@storms.json" \
             https://neocities.org/api/upload
-
-
-
