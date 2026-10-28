@@ -7,6 +7,7 @@ from pathlib import Path
 from eccodes import (
     codes_bufr_new_from_file,
     codes_get,
+    codes_get_array,
     codes_release,
     codes_set,
 )
@@ -14,16 +15,7 @@ from eccodes import (
 INPUT = Path("ecmwf-track.bufr")
 OUTPUT = Path("storms.json")
 MS_TO_KNOTS = 1.94384449
-
-
-def get_value(message, key):
-    try:
-        value = float(codes_get(message, key))
-        if not math.isfinite(value) or value <= -1e90:
-            return None
-        return value
-    except Exception:
-        return None
+MISSING = -1e90
 
 
 def get_text(message, key):
@@ -34,19 +26,65 @@ def get_text(message, key):
         return None
 
 
+def get_number(message, key):
+    """Get the first valid numeric value from a scalar or repeated key."""
+    try:
+        values = codes_get_array(message, key)
+        for item in values:
+            value = float(item)
+            if math.isfinite(value) and value > MISSING:
+                return value
+    except Exception:
+        try:
+            value = float(codes_get(message, key))
+            if math.isfinite(value) and value > MISSING:
+                return value
+        except Exception:
+            pass
+    return None
+
+
 def iso_utc(value):
     return value.astimezone(timezone.utc).isoformat().replace(
         "+00:00", "Z"
     )
 
 
+def valid_position(lat, lon):
+    return (
+        lat is not None
+        and lon is not None
+        and -90 <= lat <= 90
+        and -180 <= lon <= 180
+    )
+
+
+def make_point(storm_id, lat, lon, lead, run_time, wind_ms=None):
+    point = {
+        "id": storm_id,
+        "latitude": lat,
+        "longitude": lon,
+        "wind_speed_ms": wind_ms,
+        "wind_speed_knots": (
+            round(wind_ms * MS_TO_KNOTS, 2)
+            if wind_ms is not None else None
+        ),
+        "forecast_lead_hours": int(lead),
+        "valid_time_utc": iso_utc(
+            run_time + timedelta(hours=lead)
+        ),
+    }
+    return point
+
+
 if not INPUT.exists():
     raise FileNotFoundError(f"Missing input file: {INPUT}")
 
 records = []
-reference_time = None
+tracks = []
 messages_read = 0
 records_skipped = 0
+reference_time = None
 
 with INPUT.open("rb") as file:
     while True:
@@ -58,23 +96,6 @@ with INPUT.open("rb") as file:
 
         try:
             codes_set(message, "unpack", 1)
-
-            # Safe diagnostic: inspect known keys only.
-            if messages_read == 1:
-                print("\n--- BUFR diagnostic ---")
-                for key in (
-                    "stormIdentifier",
-                    "latitude",
-                    "longitude",
-                    "timePeriod",
-                    "numberOfTrack",
-                    "unexpandedDescriptors",
-                    "expandedDescriptors",
-                ):
-                    try:
-                        print(f"{key}: {codes_get(message, key)}")
-                    except Exception:
-                        print(f"{key}: unavailable")
 
             year = int(codes_get(message, "typicalYear"))
             month = int(codes_get(message, "typicalMonth"))
@@ -88,45 +109,78 @@ with INPUT.open("rb") as file:
             if reference_time is None:
                 reference_time = run_time
 
-            storm_id = get_text(message, "stormIdentifier")
-            lat = get_value(message, "latitude")
-            lon = get_value(message, "longitude")
-            wind_ms = get_value(message, "windSpeedAt10M")
-            lead = get_value(message, "timePeriod")
+            storm_id = get_text(message, "stormIdentifier") or "unknown"
+            points = []
 
-            if lat is None or lon is None:
-                records_skipped += 1
-                print(f"Skipping {storm_id}: missing coordinates")
-                continue
+            # Initial analyzed position: significance rank #2.
+            lat = get_number(message, "#2#latitude")
+            lon = get_number(message, "#2#longitude")
+            wind = get_number(message, "#1#windSpeedAt10M")
 
-            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
-                records_skipped += 1
-                print(f"Skipping {storm_id}: invalid coordinates")
-                continue
-
-            lead_hours = int(lead) if lead is not None else None
-
-            record = {
-                "id": storm_id or "unknown",
-                "latitude": lat,
-                "longitude": lon,
-                "wind_speed_ms": wind_ms,
-                "wind_speed_knots": (
-                    round(wind_ms * MS_TO_KNOTS, 2)
-                    if wind_ms is not None else None
-                ),
-                "forecast_lead_hours": lead_hours,
-            }
-
-            if lead_hours is not None:
-                record["valid_time_utc"] = iso_utc(
-                    run_time + timedelta(hours=lead_hours)
+            if valid_position(lat, lon):
+                points.append(
+                    make_point(storm_id, lat, lon, 0, run_time, wind)
                 )
 
-            records.append(record)
+            # Forecast periods use numbered timePeriod keys.
+            # For period rank N, the storm-centre position is rank 2*N+2.
+            period_rank = 1
+
+            while period_rank <= 100:
+                lead = get_number(
+                    message, f"#{period_rank}#timePeriod"
+                )
+
+                if lead is None:
+                    break
+
+                position_rank = 2 * period_rank + 2
+                wind_rank = period_rank + 1
+
+                lat = get_number(
+                    message, f"#{position_rank}#latitude"
+                )
+                lon = get_number(
+                    message, f"#{position_rank}#longitude"
+                )
+                wind = get_number(
+                    message, f"#{wind_rank}#windSpeedAt10M"
+                )
+
+                if valid_position(lat, lon):
+                    points.append(
+                        make_point(
+                            storm_id, lat, lon, lead, run_time, wind
+                        )
+                    )
+                else:
+                    records_skipped += 1
+
+                period_rank += 1
+
+            # Sort positions chronologically and remove duplicate leads.
+            points.sort(key=lambda p: p["forecast_lead_hours"])
+
+            unique_points = []
+            seen_leads = set()
+
+            for point in points:
+                lead = point["forecast_lead_hours"]
+                if lead not in seen_leads:
+                    unique_points.append(point)
+                    seen_leads.add(lead)
+
+            records.extend(unique_points)
+
+            if len(unique_points) >= 2:
+                tracks.append({
+                    "id": storm_id,
+                    "points": unique_points,
+                })
+
             print(
-                f"Added {record['id']}: "
-                f"lat={lat}, lon={lon}, lead={lead_hours}"
+                f"{storm_id}: extracted "
+                f"{len(unique_points)} positions"
             )
 
         except Exception as error:
@@ -139,25 +193,6 @@ with INPUT.open("rb") as file:
 if reference_time is None:
     raise RuntimeError("No readable BUFR messages found.")
 
-records.sort(
-    key=lambda item: (
-        item["id"],
-        item["forecast_lead_hours"]
-        if item["forecast_lead_hours"] is not None
-        else -1,
-    )
-)
-
-grouped = {}
-for record in records:
-    grouped.setdefault(record["id"], []).append(record)
-
-tracks = [
-    {"id": storm_id, "points": points}
-    for storm_id, points in grouped.items()
-    if len(points) >= 2
-]
-
 result = {
     "source": "ECMWF IFS tropical cyclone tracks",
     "attribution": "Data from ECMWF, licensed under CC BY 4.0",
@@ -169,11 +204,14 @@ result = {
     "tracks": tracks,
 }
 
-OUTPUT.write_text(json.dumps(result, indent=2), encoding="utf-8")
+OUTPUT.write_text(
+    json.dumps(result, indent=2),
+    encoding="utf-8",
+)
 
 print("\n--- Summary ---")
 print(f"Messages read: {messages_read}")
 print(f"Records skipped: {records_skipped}")
-print(f"Valid forecast points: {len(records)}")
-print(f"Storm groups with 2+ points: {len(tracks)}")
+print(f"Valid positions: {len(records)}")
+print(f"Tracks with 2+ positions: {len(tracks)}")
 print(f"JSON saved to: {OUTPUT}")
