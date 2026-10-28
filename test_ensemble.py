@@ -1,29 +1,55 @@
 
 from pathlib import Path
 from ecmwf.opendata import Client
+from eccodes import (
+    codes_bufr_new_from_file,
+    codes_get,
+    codes_release,
+    codes_set,
+)
 
 client = Client(source="ecmwf")
 output = Path("ensemble-track.bufr")
 
 for step in (144, 360):
     try:
-        print(f"Testing ensemble tracks at step={step}...")
-
         result = client.latest(
             stream="enfo",
             type="tf",
             step=step,
             target=str(output),
         )
-
-        print(f"Found ensemble run: {result}")
-
-        if output.exists() and output.stat().st_size > 0:
-            print(f"SUCCESS! Downloaded {output.stat().st_size:,} bytes.")
-            break
-
+        print(f"Selected run: {result}")
+        break
     except Exception as error:
-        print(f"Step {step} unavailable: {error}")
+        print(f"Step {step}: {error}")
 else:
-    raise RuntimeError("No usable ensemble track file was downloaded.")
+    raise RuntimeError("No ensemble track file available.")
 
+with output.open("rb") as file:
+    message = codes_bufr_new_from_file(file)
+
+    if message is None:
+        raise RuntimeError("No BUFR message found.")
+
+    try:
+        codes_set(message, "unpack", 1)
+
+        for key in (
+            "typicalYear",
+            "typicalMonth",
+            "typicalDay",
+            "typicalHour",
+            "stormIdentifier",
+            "number",
+            "perturbationNumber",
+            "latitude",
+            "longitude",
+            "timePeriod",
+        ):
+            try:
+                print(f"{key}: {codes_get(message, key)}")
+            except Exception:
+                print(f"{key}: unavailable")
+    finally:
+        codes_release(message)
