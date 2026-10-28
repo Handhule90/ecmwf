@@ -14,13 +14,17 @@ output = Path("ensemble-track.bufr")
 for step in (144, 360):
     try:
         result = client.latest(
-            stream="enfo",
-            type="tf",
-            step=step,
-            target=str(output),
-        )
-        print(f"Selected run: {result}")
-        break
+    stream="enfo",
+    type="tf",
+    step=step,
+    target=str(output),
+)
+
+if output.exists() and output.stat().st_size > 0:
+    print(f"Downloaded: {result}")
+    break
+
+print("No file downloaded; trying the next step.")
     except Exception as error:
         print(f"Step {step}: {error}")
 else:
