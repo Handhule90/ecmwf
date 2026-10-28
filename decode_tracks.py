@@ -68,8 +68,6 @@ with INPUT.open("rb") as file:
                     "longitude",
                     "timePeriod",
                     "numberOfTrack",
-                    "numberOfSubsets",
-                    "numberOfObservations",
                     "unexpandedDescriptors",
                     "expandedDescriptors",
                 ):
