@@ -16,55 +16,68 @@ for step in (144, 360):
     try:
         output.unlink(missing_ok=True)
 
-        print(f"Testing ensemble tracks at step={step}...")
-
-        result = client.latest(
+        latest = client.latest(
             stream="enfo",
             type="tf",
+            step=step,
+        )
+
+        print(f"Selected ensemble run: {latest}")
+
+        client.retrieve(
+            stream="enfo",
+            type="tf",
+            date=latest.date(),
+            time=latest.hour,
             step=step,
             target=str(output),
         )
 
-        print(f"Selected run: {result}")
-
         if output.exists() and output.stat().st_size > 0:
-            print(f"Downloaded {output.stat().st_size:,} bytes.")
+            print(f"Download successful: {output.stat().st_size:,} bytes")
             downloaded = True
             break
-
-        print("No file was downloaded for this step.")
 
     except Exception as error:
         print(f"Step {step} failed: {error}")
 
 if not downloaded:
-    raise RuntimeError("No ensemble track file was downloaded.")
+    raise RuntimeError("Could not download ensemble track data.")
+
+messages = 0
 
 with output.open("rb") as file:
-    message = codes_bufr_new_from_file(file)
+    while True:
+        message = codes_bufr_new_from_file(file)
+        if message is None:
+            break
 
-    if message is None:
-        raise RuntimeError("The downloaded file contains no readable BUFR message.")
+        messages += 1
 
-    try:
-        codes_set(message, "unpack", 1)
+        try:
+            codes_set(message, "unpack", 1)
 
-        for key in (
-            "typicalYear",
-            "typicalMonth",
-            "typicalDay",
-            "typicalHour",
-            "stormIdentifier",
-            "number",
-            "perturbationNumber",
-            "latitude",
-            "longitude",
-            "timePeriod",
-        ):
-            try:
-                print(f"{key}: {codes_get(message, key)}")
-            except Exception:
-                print(f"{key}: unavailable")
+            if messages == 1:
+                for key in (
+                    "typicalYear",
+                    "typicalMonth",
+                    "typicalDay",
+                    "typicalHour",
+                    "stormIdentifier",
+                    "number",
+                    "perturbationNumber",
+                    "latitude",
+                    "longitude",
+                    "timePeriod",
+                ):
+                    try:
+                        print(f"{key}: {codes_get(message, key)}")
+                    except Exception:
+                        print(f"{key}: unavailable")
+        finally:
+            codes_release(message)
 
-    finally:
-        codes_release(message)
+print(f"Total BUFR messages: {messages}")
+
+if messages == 0:
+    raise RuntimeError("Downloaded file contains no readable BUFR messages.")
