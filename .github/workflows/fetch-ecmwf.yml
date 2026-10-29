@@ -25,6 +25,9 @@ jobs:
       - name: Test ECMWF ensemble track availability
         run: python test_ensemble.py
 
+      - name: Inspect ensemble BUFR structure
+        run: python inspect_ensemble.py
+
       - name: Inspect ensemble track values
         run: python inspect_ensemble.py
 
