@@ -3,9 +3,12 @@ from pathlib import Path
 from ecmwf.opendata import Client
 from eccodes import (
     codes_bufr_new_from_file,
-    codes_get,
     codes_set,
     codes_release,
+    codes_bufr_keys_iterator_new,
+    codes_bufr_keys_iterator_next,
+    codes_bufr_keys_iterator_get_name,
+    codes_bufr_keys_iterator_delete,
 )
 
 client = Client(source="ecmwf")
@@ -49,6 +52,7 @@ messages = 0
 with output.open("rb") as file:
     while True:
         message = codes_bufr_new_from_file(file)
+
         if message is None:
             break
 
@@ -58,26 +62,28 @@ with output.open("rb") as file:
             codes_set(message, "unpack", 1)
 
             if messages == 1:
-                for key in (
-                    "typicalYear",
-                    "typicalMonth",
-                    "typicalDay",
-                    "typicalHour",
-                    "stormIdentifier",
-                    "number",
-                    "perturbationNumber",
-                    "latitude",
-                    "longitude",
-                    "timePeriod",
-                ):
-                    try:
-                        print(f"{key}: {codes_get(message, key)}")
-                    except Exception:
-                        print(f"{key}: unavailable")
+                print("\n--- Available BUFR keys ---")
+
+                iterator = None
+
+                try:
+                    iterator = codes_bufr_keys_iterator_new(message)
+
+                    while codes_bufr_keys_iterator_next(iterator):
+                        key = codes_bufr_keys_iterator_get_name(iterator)
+                        print(key)
+
+                except Exception as error:
+                    print(f"Key inspection failed: {error}")
+
+                finally:
+                    if iterator is not None:
+                        codes_bufr_keys_iterator_delete(iterator)
+
         finally:
             codes_release(message)
 
-print(f"Total BUFR messages: {messages}")
+print(f"\nTotal BUFR messages: {messages}")
 
 if messages == 0:
     raise RuntimeError("Downloaded file contains no readable BUFR messages.")
