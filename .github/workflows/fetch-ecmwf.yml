@@ -20,7 +20,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install required packages
-        run: pip install ecmwf-opendata eccodes
+        run: pip install ecmwf-opendata eccodes numpy
 
       - name: Test ECMWF ensemble track availability
         run: python test_ensemble.py
