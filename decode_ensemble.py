@@ -52,18 +52,17 @@ with INPUT.open("rb") as file:
             )
 
             if len(member_numbers) == 0:
-                member_numbers = get_array(message, "ensembleMemberNumber")
+                member_numbers = get_array(
+                    message, "ensembleMemberNumber"
+                )
 
             if len(member_numbers) == 0:
                 continue
 
             member_numbers = [int(x) for x in member_numbers]
-            member_count = len(member_numbers)
 
-            if storm_id not in storms:
-                storms[storm_id] = {}
+            storms.setdefault(storm_id, {})
 
-            # Each repeated key represents a forecast position group.
             for period_index in range(1, 30):
                 latitudes = get_array(
                     message, f"#{period_index}#latitude"
@@ -75,19 +74,19 @@ with INPUT.open("rb") as file:
                     message, f"#{period_index}#timePeriod"
                 )
 
-                if not latitudes or not longitudes or not periods:
+                if (
+                    len(latitudes) == 0
+                    or len(longitudes) == 0
+                    or len(periods) == 0
+                ):
                     continue
 
                 forecast_hour = int(periods[0])
 
-                if len(latitudes) == 1 and member_count > 1:
-                    latitudes = list(latitudes) * member_count
-
-                if len(longitudes) == 1 and member_count > 1:
-                    longitudes = list(longitudes) * member_count
-
                 count = min(
-                    member_count, len(latitudes), len(longitudes)
+                    len(member_numbers),
+                    len(latitudes),
+                    len(longitudes),
                 )
 
                 for i in range(count):
@@ -103,8 +102,8 @@ with INPUT.open("rb") as file:
                         continue
 
                     member_id = str(member_numbers[i])
-
-                    storms[storm_id].setdefault(member_id, [])
+                    members = storms[storm_id]
+                    members.setdefault(member_id, [])
 
                     point = {
                         "forecast_hour": forecast_hour,
@@ -112,8 +111,8 @@ with INPUT.open("rb") as file:
                         "longitude": lon,
                     }
 
-                    if point not in storms[storm_id][member_id]:
-                        storms[storm_id][member_id].append(point)
+                    if point not in members[member_id]:
+                        members[member_id].append(point)
 
         except Exception as error:
             print(f"Message {messages_read} skipped: {error}")
@@ -121,17 +120,18 @@ with INPUT.open("rb") as file:
         finally:
             codes_release(message)
 
-# Sort each member's positions by forecast time.
 result = {}
 
 for storm_id, members in storms.items():
-    result[storm_id] = {}
+    valid_members = {}
 
     for member_id, points in members.items():
         points.sort(key=lambda point: point["forecast_hour"])
-
         if points:
-            result[storm_id][member_id] = points
+            valid_members[member_id] = points
+
+    if valid_members:
+        result[storm_id] = valid_members
 
 payload = {
     "source": "ECMWF ensemble forecast",
@@ -143,10 +143,14 @@ payload = {
     "storms": result,
 }
 
-OUTPUT.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+OUTPUT.write_text(
+    json.dumps(payload, indent=2),
+    encoding="utf-8",
+)
 
 print(f"Messages read: {messages_read}")
 print(f"Storms decoded: {len(result)}")
+
 for storm_id, members in result.items():
     print(f"{storm_id}: {len(members)} ensemble members")
 
