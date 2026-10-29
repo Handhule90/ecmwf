@@ -46,7 +46,9 @@ jobs:
           name: ecmwf-track-data
           path: |
             ecmwf-track.bufr
+            ensemble-track.bufr
             storms.json
+            ensemble.json
           if-no-files-found: error
           retention-days: 7
 
