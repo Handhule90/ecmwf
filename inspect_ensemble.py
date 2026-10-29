@@ -3,10 +3,12 @@ from pathlib import Path
 from eccodes import (
     codes_bufr_new_from_file,
     codes_set,
-    codes_get,
     codes_get_array,
     codes_release,
 )
+import numpy as np
+
+MISSING = -1e90
 
 with open("ensemble-track.bufr", "rb") as file:
     message = codes_bufr_new_from_file(file)
@@ -17,29 +19,32 @@ with open("ensemble-track.bufr", "rb") as file:
     try:
         codes_set(message, "unpack", 1)
 
-        print("Subsets:", codes_get(message, "numberOfSubsets"))
-        print("Compressed:", codes_get(message, "compressedData"))
-
-        for key in (
-            "#1#latitude",
-            "#2#latitude",
-            "#3#latitude",
-            "#1#longitude",
-            "#2#longitude",
-            "#3#longitude",
-            "#1#timePeriod",
-            "#2#timePeriod",
-            "#3#timePeriod",
-        ):
+        for period in range(1, 11):
             try:
-                values = codes_get_array(message, key)
-                print(f"\n{key}: count={len(values)}")
-                print(values[:10])
-            except Exception as error:
-                print(f"\n{key}: unavailable ({error})")
+                lats = codes_get_array(message, f"#{period}#latitude")
+                lons = codes_get_array(message, f"#{period}#longitude")
+            except Exception:
+                break
+
+            valid = (
+                np.isfinite(lats)
+                & np.isfinite(lons)
+                & (lats > -90)
+                & (lats < 90)
+                & (lons >= -180)
+                & (lons <= 180)
+            )
+
+            print(
+                f"Period {period}: "
+                f"valid={np.count_nonzero(valid)}, "
+                f"latitude_count={len(lats)}, "
+                f"longitude_count={len(lons)}"
+            )
 
     finally:
         codes_release(message)
+
 
 
 
