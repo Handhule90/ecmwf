@@ -57,4 +57,5 @@ jobs:
           curl --fail-with-body \
             -H "Authorization: Bearer $NEOCITIES_API_KEY" \
             -F "newiconshu/ecmwf/storms.json=@storms.json" \
+            -F "newiconshu/ecmwf/ensemble.json=@ensemble.json" \
             https://neocities.org/api/upload
